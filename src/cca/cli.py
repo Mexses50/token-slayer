@@ -446,7 +446,7 @@ def sessions_cmd(
             "[dim](Ctrl+C to stop)[/dim]\n"
         )
         try:
-            run_live(sessions)
+            run_live(sessions, hours=hours)
         except KeyboardInterrupt:
             console.print("\n[dim]Stopped.[/dim]")
     else:

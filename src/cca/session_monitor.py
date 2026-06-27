@@ -96,6 +96,17 @@ def _make_session_panel(s: dict, highlight: str = "cyan") -> Panel:
     t.add_column(style="dim", width=16)
     t.add_column(justify="right", style="bold")
 
+    has_delta = s.get("delta_output", 0) > 0 or s.get("delta_input", 0) > 0
+
+    if has_delta:
+        t.add_row("[dim]── son mesaj ──[/dim]", "")
+        t.add_row("Δ Input",  f"[green]+{_fmt(s['delta_input'])}[/green]")
+        t.add_row("Δ Output", f"[yellow]+{_fmt(s['delta_output'])}[/yellow]")
+        t.add_row("Δ Cache W", f"[blue]+{_fmt(s['delta_cache_w'])}[/blue]")
+        t.add_row("Δ Cost",   f"[bold magenta]+${s['delta_cost']:.4f}[/bold magenta]")
+        t.add_row("─" * 16, "─" * 8)
+
+    t.add_row("[dim]── toplam ──[/dim]", "")
     t.add_row("Turns", str(s["turns"]))
     t.add_row("Input", f"[green]{_fmt(s['input_tokens'])}[/green]")
     t.add_row("Output", f"[yellow]{_fmt(s['output_tokens'])}[/yellow]")
@@ -144,26 +155,38 @@ def _make_full_table(sessions: list[dict]) -> Table:
 
 def _compare_panel(a: dict, b: dict) -> Panel:
     """Side-by-side diff panel for two sessions."""
-    def _delta(va: int, vb: int) -> str:
+    def _diff_str(va: int, vb: int) -> str:
         diff = vb - va
         if diff > 0:
             return f"[red]+{_fmt(diff)}[/red]"
         if diff < 0:
-            return f"[green]{_fmt(diff)}[/green]"
+            return f"[green]{_fmt(abs(diff))}[/green]"
         return "[dim]==[/dim]"
 
     t = Table.grid(padding=(0, 1))
     t.add_column(style="dim", width=14)
     t.add_column(justify="right", width=10)
-    t.add_column(justify="center", width=12)
+    t.add_column(justify="center", width=10)
     t.add_column(justify="right", width=10)
 
-    t.add_row("", f"[cyan]{a['short_id']}[/cyan]", "diff", f"[yellow]{b['short_id']}[/yellow]")
-    t.add_row("─" * 14, "─" * 10, "─" * 12, "─" * 10)
-    for label, key in [("Input", "input_tokens"), ("Output", "output_tokens"),
-                       ("Cache W", "cache_write"), ("Cache R", "cache_read"), ("Total", "total_tokens")]:
-        t.add_row(label, _fmt(a[key]), _delta(a[key], b[key]), _fmt(b[key]))
-    t.add_row("Cost $", f"${a['cost_usd']:.4f}", _delta(int(a['cost_usd'] * 10000), int(b['cost_usd'] * 10000)), f"${b['cost_usd']:.4f}")
+    t.add_row("", f"[cyan]{a['short_id']}[/cyan]", "diff →", f"[yellow]{b['short_id']}[/yellow]")
+    t.add_row("─" * 14, "─" * 10, "─" * 10, "─" * 10)
+
+    has_delta = a.get("delta_output", 0) > 0 or b.get("delta_output", 0) > 0
+    if has_delta:
+        t.add_row("[dim]son mesaj[/dim]", "", "", "")
+        for label, key in [("Δ Input", "delta_input"), ("Δ Output", "delta_output"),
+                            ("Δ Cache W", "delta_cache_w")]:
+            va, vb = a.get(key, 0), b.get(key, 0)
+            t.add_row(label, _fmt(va), _diff_str(va, vb), _fmt(vb))
+        ca, cb = a.get("delta_cost", 0.0), b.get("delta_cost", 0.0)
+        t.add_row("Δ Cost $", f"${ca:.4f}", _diff_str(int(ca * 10000), int(cb * 10000)), f"${cb:.4f}")
+        t.add_row("─" * 14, "─" * 10, "─" * 10, "─" * 10)
+
+    t.add_row("[dim]toplam[/dim]", "", "", "")
+    for label, key in [("Input", "input_tokens"), ("Output", "output_tokens"), ("Total", "total_tokens")]:
+        t.add_row(label, _fmt(a[key]), _diff_str(a[key], b[key]), _fmt(b[key]))
+    t.add_row("Cost $", f"${a['cost_usd']:.4f}", _diff_str(int(a['cost_usd'] * 10000), int(b['cost_usd'] * 10000)), f"${b['cost_usd']:.4f}")
 
     return Panel(t, title="[bold]Comparison[/bold]", border_style="white")
 
@@ -177,16 +200,38 @@ def _build_renderable(sessions: list[dict]) -> object:
     return _make_full_table(sessions)
 
 
-def run_live(sessions: list[dict], refresh: float = 2.0) -> None:
+def _apply_deltas(sessions: list[dict], prev: dict[str, dict]) -> None:
+    """Attach delta fields to each session based on previous snapshot."""
+    _KEYS = ("input_tokens", "output_tokens", "cache_write", "cache_read")
+    for s in sessions:
+        sid = s["session_id"]
+        p = prev.get(sid)
+        if p:
+            s["delta_input"]   = s["input_tokens"] - p["input_tokens"]
+            s["delta_output"]  = s["output_tokens"] - p["output_tokens"]
+            s["delta_cache_w"] = s["cache_write"]   - p["cache_write"]
+            s["delta_cache_r"] = s["cache_read"]    - p["cache_read"]
+            s["delta_cost"] = round(
+                s["delta_input"]   * _PRICE_INPUT +
+                s["delta_output"]  * _PRICE_OUTPUT +
+                s["delta_cache_w"] * _PRICE_CACHE_WRITE +
+                s["delta_cache_r"] * _PRICE_CACHE_READ,
+                5,
+            )
+        else:
+            s["delta_input"] = s["delta_output"] = s["delta_cache_w"] = s["delta_cache_r"] = 0
+            s["delta_cost"] = 0.0
+        prev[sid] = {k: s[k] for k in _KEYS}
+
+
+def run_live(sessions: list[dict], refresh: float = 2.0, hours: int = 24) -> None:
     """Live-refresh token dashboard. Press Ctrl+C to stop."""
     console = Console()
-    paths = [s["path"] for s in sessions]
-
-    def _refresh() -> list[dict]:
-        return [parse_session(p) for p in paths]
+    prev: dict[str, dict] = {}
 
     with Live(console=console, refresh_per_second=1 / refresh, screen=False) as live:
         while True:
-            updated = _refresh()
+            updated = get_recent_sessions(hours=hours)
+            _apply_deltas(updated, prev)
             live.update(_build_renderable(updated))
             time.sleep(refresh)
