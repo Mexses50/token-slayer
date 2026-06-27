@@ -3,9 +3,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claude-context-analyzer"
+name = "token-slayer"
 version = "0.1.0"
-description = "Analyze Python projects and generate optimized CLAUDE.md files to reduce token usage"
+description = "Slash your Claude token usage. Analyze Python projects, generate .claudeignore and CLAUDE.md."
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.12",
@@ -18,10 +18,23 @@ dependencies = [
 ]
 
 [project.scripts]
-cca = "cca.cli:app"
+tslayer = "cca.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+]
+mcp = [
+    "mcp[cli]>=1.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

@@ -42,10 +42,16 @@ def generate_claude_md(
     hot_files: dict[str, int],
     unused_exports: dict[str, list[str]],
     token_savings_pct: float | None = None,
+    frameworks: dict[str, str] | None = None,
 ) -> str:
     total_lines = sum(f.lines for f in file_infos)
     total_funcs = sum(f.function_count for f in file_infos)
     total_classes = sum(f.class_count for f in file_infos)
+    total_typed = sum(f.typed_functions for f in file_infos)
+    type_cov = total_typed / total_funcs * 100 if total_funcs else 0.0
+    avg_complexity = (
+        sum(f.complexity for f in file_infos) / len(file_infos) if file_infos else 0
+    )
 
     sections: list[str] = [
         "# CLAUDE.md",
@@ -58,9 +64,14 @@ def generate_claude_md(
         f"- **Files:** {len(file_infos)} Python files",
         f"- **Lines of code:** {total_lines:,}",
         f"- **Functions:** {total_funcs}  |  **Classes:** {total_classes}",
+        f"- **Type coverage:** {type_cov:.0f}%  |  **Avg complexity:** {avg_complexity:.1f}",
     ]
     if token_savings_pct is not None:
         sections.append(f"- **Estimated token reduction with .claudeignore:** {token_savings_pct:.1f}%")
+
+    if frameworks:
+        fw_list = ", ".join(frameworks.values())
+        sections.append(f"- **Detected frameworks:** {fw_list}")
 
     sections += [
         "",

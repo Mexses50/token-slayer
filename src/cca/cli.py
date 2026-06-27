@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import datetime
+import json
+import stat
 from pathlib import Path
 
 import typer
@@ -9,14 +12,17 @@ from cca import __version__
 from cca import reporter
 from cca.config_gen import generate_claude_md, CLAUDEIGNORE_PATTERNS
 from cca.dead_code import find_unused_exports
+from cca.framework import detect_frameworks
 from cca.git_analyzer import get_hot_files, is_git_repo
-from cca.graph import build_graph, get_in_degrees, get_most_imported
+from cca.graph import build_graph, get_in_degrees, get_most_imported, find_cycles
+from cca.health import calculate_health
+from cca.lang import analyze_extra_files, detect_extra_languages
 from cca.parser import analyze_project
 from cca.token_counter import count_all_tokens, count_project_tokens
 
 app = typer.Typer(
-    name="cca",
-    help="Claude Context Analyzer — analyze Python projects, reduce token waste.",
+    name="tslayer",
+    help="Token Slayer -- slash your Claude token usage. Analyze projects, generate CLAUDE.md.",
     no_args_is_help=True,
 )
 console = Console()
@@ -36,16 +42,32 @@ def analyze(
     path: Path = typer.Argument(..., help="Path to the Python project"),
     dead_code: bool = typer.Option(False, "--dead-code", "-d", help="Show potential dead code"),
     tokens: bool = typer.Option(False, "--tokens", "-t", help="Show token budget estimate"),
+    chart: bool = typer.Option(False, "--chart", "-c", help="Show visual token distribution chart"),
+    quality: bool = typer.Option(False, "--quality", "-q", help="Show code quality metrics (complexity, type coverage)"),
+    cycles: bool = typer.Option(False, "--cycles", help="Show circular dependency check"),
+    multilang: bool = typer.Option(False, "--multilang", "-m", help="Include TypeScript/Go files"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ):
     """Analyze a Python project: file stats, dependencies, hot zones."""
     _require_dir(path)
-    console.print(f"\n[bold green]Analyzing:[/bold green] {path.resolve()}\n")
+    if not output_json:
+        console.print(f"\n[bold green]Analyzing:[/bold green] {path.resolve()}\n")
 
     with console.status("[cyan]Parsing Python files...[/cyan]"):
         file_infos = analyze_project(path)
 
+    extra_langs: set[str] = set()
+    if multilang:
+        extra_langs = detect_extra_languages(path)
+        if extra_langs:
+            with console.status(f"[cyan]Parsing {', '.join(extra_langs)} files...[/cyan]"):
+                file_infos += analyze_extra_files(path)
+
     if not file_infos:
-        console.print("[yellow]No Python files found.[/yellow]")
+        if output_json:
+            typer.echo(json.dumps({"error": "No source files found"}))
+        else:
+            console.print("[yellow]No source files found.[/yellow]")
         raise typer.Exit(0)
 
     with console.status("[cyan]Building dependency graph...[/cyan]"):
@@ -58,30 +80,120 @@ def analyze(
         with console.status("[cyan]Scanning git history...[/cyan]"):
             hot_files = get_hot_files(path)
 
+    frameworks = detect_frameworks(file_infos)
+
+    if output_json:
+        result: dict = {
+            "project": str(path.resolve()),
+            "languages": ["python"] + sorted(extra_langs),
+            "files": len(file_infos),
+            "total_lines": sum(f.lines for f in file_infos),
+            "total_functions": sum(f.function_count for f in file_infos),
+            "total_classes": sum(f.class_count for f in file_infos),
+            "frameworks": list(frameworks.values()),
+            "most_imported": [{"file": p, "count": c} for p, c in most_imported if c > 0],
+            "hot_files": hot_files,
+        }
+        if tokens:
+            with console.status("[cyan]Counting tokens...[/cyan]"):
+                base_data = count_all_tokens(path)
+                opt_data = count_project_tokens(path)
+                b, o = base_data["total"], opt_data["total"]
+                pct = (b - o) / b * 100 if b else 0.0
+            result["tokens"] = {"baseline": b, "optimized": o, "savings_pct": round(pct, 1)}
+        if cycles:
+            cycle_list = find_cycles(graph)
+            result["cycles"] = [" -> ".join(c + [c[0]]) for c in cycle_list]
+        if quality:
+            result["quality"] = {
+                "avg_complexity": round(
+                    sum(f.complexity for f in file_infos) / len(file_infos), 1
+                ) if file_infos else 0,
+                "type_coverage_pct": round(
+                    sum(f.typed_functions for f in file_infos) /
+                    max(sum(f.function_count for f in file_infos), 1) * 100, 1
+                ),
+            }
+        typer.echo(json.dumps(result, indent=2))
+        return
+
+    if frameworks:
+        reporter.print_frameworks(frameworks)
+
+    if extra_langs:
+        console.print(f"[dim]  Extra languages detected: {', '.join(sorted(extra_langs))}[/dim]\n")
+
     reporter.print_analysis_table(file_infos, path, in_degrees, hot_files)
     reporter.print_dependency_summary(most_imported)
 
     if hot_files:
         console.print("[dim]  HOT = changed in recent git history[/dim]\n")
 
+    if quality:
+        reporter.print_quality_table(file_infos, path)
+
+    if cycles:
+        with console.status("[cyan]Checking for circular dependencies...[/cyan]"):
+            cycle_list = find_cycles(graph)
+        reporter.print_cycles_warning(cycle_list)
+
     if dead_code:
         with console.status("[cyan]Detecting dead code...[/cyan]"):
             unused = find_unused_exports(file_infos, path)
         reporter.print_unused(unused)
 
-    if tokens:
+    if tokens or chart:
         with console.status("[cyan]Counting tokens...[/cyan]"):
-            base = count_all_tokens(path)
-            opt = count_project_tokens(path)
-            b, o = base["total"], opt["total"]
+            base_data = count_all_tokens(path)
+            opt_data = count_project_tokens(path)
+            b, o = base_data["total"], opt_data["total"]
             pct = (b - o) / b * 100 if b else 0.0
-        reporter.print_token_report(b, o, pct)
+
+        if tokens:
+            reporter.print_token_report(b, o, pct)
+
+        if chart:
+            reporter.print_token_comparison_chart(base_data["files"], opt_data["files"])
+
+
+@app.command("score")
+def score(
+    path: Path = typer.Argument(..., help="Path to the Python project"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Calculate a composite health score (0-100) for the project."""
+    _require_dir(path)
+    if not output_json:
+        console.print(f"\n[bold green]Scoring:[/bold green] {path.resolve()}\n")
+
+    with console.status("[cyan]Analyzing project...[/cyan]"):
+        file_infos = analyze_project(path)
+        graph = build_graph(file_infos, path)
+        cycle_list = find_cycles(graph)
+
+    with console.status("[cyan]Detecting dead code...[/cyan]"):
+        unused = find_unused_exports(file_infos, path)
+
+    with console.status("[cyan]Counting tokens...[/cyan]"):
+        base_data = count_all_tokens(path)
+        opt_data = count_project_tokens(path)
+        b, o = base_data["total"], opt_data["total"]
+        pct = (b - o) / b * 100 if b else 0.0
+
+    health = calculate_health(file_infos, pct, unused, cycle_list)
+
+    if output_json:
+        typer.echo(json.dumps(health.to_dict(), indent=2))
+        return
+
+    reporter.print_health_score(health)
 
 
 @app.command("generate-config")
 def generate_config(
     path: Path = typer.Argument(..., help="Path to the Python project"),
     output: Path = typer.Option(None, "--output", "-o", help="Output path (default: <path>/CLAUDE.md)"),
+    chart: bool = typer.Option(False, "--chart", "-c", help="Show visual token distribution chart"),
 ):
     """Generate an optimized CLAUDE.md for the project."""
     _require_dir(path)
@@ -101,10 +213,12 @@ def generate_config(
         unused = find_unused_exports(file_infos, path)
 
     with console.status("[cyan]Counting tokens...[/cyan]"):
-        base = count_all_tokens(path)
-        opt = count_project_tokens(path)
-        b, o = base["total"], opt["total"]
+        base_data = count_all_tokens(path)
+        opt_data = count_project_tokens(path)
+        b, o = base_data["total"], opt_data["total"]
         pct = (b - o) / b * 100 if b else 0.0
+
+    frameworks = detect_frameworks(file_infos)
 
     content = generate_claude_md(
         root=path,
@@ -113,12 +227,196 @@ def generate_config(
         hot_files=hot_files,
         unused_exports=unused,
         token_savings_pct=pct,
+        frameworks=frameworks,
     )
 
     out = output or (path / "CLAUDE.md")
     out.write_text(content, encoding="utf-8")
-    console.print(f"[bold green]✓[/bold green] Written: {out}")
+    console.print(f"[bold green]v[/bold green] Written: {out}")
     reporter.print_token_report(b, o, pct)
+
+    if frameworks:
+        reporter.print_frameworks(frameworks)
+
+    if chart:
+        reporter.print_token_comparison_chart(base_data["files"], opt_data["files"])
+
+
+@app.command("tokens")
+def tokens_cmd(
+    path: Path = typer.Argument(..., help="Path to the Python project"),
+    chart: bool = typer.Option(True, "--chart/--no-chart", help="Show bar chart (default: on)"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Show detailed token budget and visual distribution chart."""
+    _require_dir(path)
+    if not output_json:
+        console.print(f"\n[bold green]Token analysis:[/bold green] {path.resolve()}\n")
+
+    with console.status("[cyan]Counting tokens...[/cyan]"):
+        base_data = count_all_tokens(path)
+        opt_data = count_project_tokens(path)
+        b, o = base_data["total"], opt_data["total"]
+        pct = (b - o) / b * 100 if b else 0.0
+
+    if output_json:
+        typer.echo(json.dumps({
+            "baseline_tokens": b,
+            "optimized_tokens": o,
+            "savings_pct": round(pct, 1),
+            "files": {
+                "baseline": base_data["files"],
+                "optimized": opt_data["files"],
+            },
+        }, indent=2))
+        return
+
+    reporter.print_token_report(b, o, pct)
+
+    if chart:
+        reporter.print_token_comparison_chart(base_data["files"], opt_data["files"])
+
+
+@app.command("audit")
+def audit(
+    path: Path = typer.Argument(..., help="Path to the Python project"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Check if CLAUDE.md exists and is up to date with the project."""
+    _require_dir(path)
+    if not output_json:
+        console.print(f"\n[bold green]Auditing:[/bold green] {path.resolve()}\n")
+
+    claude_md = path / "CLAUDE.md"
+    issues: list[str] = []
+    ok: list[str] = []
+
+    if not claude_md.exists():
+        issues.append("CLAUDE.md bulunamadi -- run: tslayer generate-config <path>")
+    else:
+        ok.append("CLAUDE.md mevcut")
+
+        md_mtime = claude_md.stat().st_mtime
+        newest_py = max(
+            (f.stat().st_mtime for f in path.rglob("*.py")
+             if not any(p in {"venv", ".venv", "__pycache__"} for p in f.parts)),
+            default=0,
+        )
+        if newest_py > md_mtime:
+            delta = (
+                datetime.datetime.fromtimestamp(newest_py)
+                - datetime.datetime.fromtimestamp(md_mtime)
+            )
+            issues.append(
+                f"CLAUDE.md eskidi -- "
+                f"en son .py degisikliginden {int(delta.total_seconds() // 60)} dakika once uretilmis"
+            )
+        else:
+            ok.append("CLAUDE.md guncel")
+
+        with console.status("[cyan]Counting tokens...[/cyan]"):
+            base_data = count_all_tokens(path)
+            opt_data = count_project_tokens(path)
+            b, o = base_data["total"], opt_data["total"]
+            pct = (b - o) / b * 100 if b else 0.0
+
+        ok.append(f"Token tasarrufu: {pct:.1f}%  ({b:,} -> {o:,})")
+
+        if o > 50_000:
+            issues.append(f"Optimize edilmis proje hala cok buyuk: {o:,} token (>50k)")
+        elif o > 20_000:
+            issues.append(f"Buyuk proje: {o:,} token -- .claudeignore genisletmeyi dusunun")
+
+    with console.status("[cyan]Checking circular dependencies...[/cyan]"):
+        file_infos = analyze_project(path)
+        graph = build_graph(file_infos, path)
+        cycle_list = find_cycles(graph)
+
+    if cycle_list:
+        issues.append(f"{len(cycle_list)} circular dependency bulundu -- cca analyze --cycles ile detay")
+    else:
+        ok.append("Circular dependency yok")
+
+    if output_json:
+        typer.echo(json.dumps({
+            "ok": ok,
+            "issues": issues,
+            "passed": len(issues) == 0,
+        }, indent=2))
+        raise typer.Exit(0 if not issues else 1)
+
+    for item in ok:
+        console.print(f"  [bold]OK[/bold]   [green]{item}[/green]")
+    for item in issues:
+        console.print(f"  [bold]!!![/bold]  [red]{item}[/red]")
+
+    console.print()
+    if issues:
+        console.print(f"[bold red]{len(issues)} sorun bulundu.[/bold red]")
+        raise typer.Exit(1)
+    else:
+        console.print("[bold green]Her sey yolunda.[/bold green]")
+
+
+@app.command("init-hooks")
+def init_hooks(
+    path: Path = typer.Argument(..., help="Path to the git project root"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing hook"),
+):
+    """Install a git pre-commit hook that runs tslayer audit before every commit."""
+    _require_dir(path)
+    git_dir = path / ".git"
+    if not git_dir.is_dir():
+        console.print(f"[red]No .git directory in {path}[/red]")
+        console.print("[dim]Run git init first.[/dim]")
+        raise typer.Exit(1)
+
+    hooks_dir = git_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+
+    if hook_path.exists() and not force:
+        console.print(
+            f"[yellow]Pre-commit hook already exists:[/yellow] {hook_path}\n"
+            "[dim]Use --force to overwrite.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    project_abs = path.resolve().as_posix()
+    hook_content = (
+        "#!/bin/sh\n"
+        "# Generated by cca (claude-context-analyzer)\n"
+        f'echo "[tslayer] Auditing project..."\n'
+        f'tslayer audit "{project_abs}"\n'
+        "STATUS=$?\n"
+        "if [ $STATUS -ne 0 ]; then\n"
+        f'  echo "[cca] Fix issues or regenerate: tslayer generate-config \\"{project_abs}\\""\n'
+        "  exit 1\n"
+        "fi\n"
+    )
+    hook_path.write_text(hook_content, encoding="utf-8")
+    current = hook_path.stat().st_mode
+    hook_path.chmod(current | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+    console.print(f"[bold green]v[/bold green] Pre-commit hook installed: {hook_path}")
+    console.print(f"[dim]Every commit will now run: tslayer audit {project_abs}[/dim]")
+
+
+@app.command("mcp")
+def mcp_cmd():
+    """Start the MCP stdio server so Claude can call cca tools directly."""
+    try:
+        from cca.mcp_server import run_server
+        console.print(
+            "[bold green]Starting MCP server...[/bold green]\n"
+            "[dim]Add to Claude Desktop config:\n"
+            '  "tslayer": {"command": "tslayer", "args": ["mcp"]}[/dim]\n'
+        )
+        run_server()
+    except ImportError as e:
+        console.print(f"[red]MCP not available:[/red] {e}")
+        console.print("[dim]Install: pip install 'mcp[cli]'[/dim]")
+        raise typer.Exit(1)
 
 
 @app.command("version")

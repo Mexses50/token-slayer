@@ -45,3 +45,11 @@ def get_in_degrees(graph: nx.DiGraph) -> dict[str, int]:
 def get_most_imported(graph: nx.DiGraph, n: int = 10) -> list[tuple[str, int]]:
     degrees = get_in_degrees(graph)
     return sorted(degrees.items(), key=lambda x: x[1], reverse=True)[:n]
+
+
+def find_cycles(graph: nx.DiGraph) -> list[list[str]]:
+    """Return list of circular dependency cycles, each as an ordered path."""
+    try:
+        return list(nx.simple_cycles(graph))
+    except Exception:
+        return []
