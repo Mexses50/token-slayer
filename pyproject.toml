@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-context-analyzer"
+version = "0.1.0"
+description = "Analyze Python projects and generate optimized CLAUDE.md files to reduce token usage"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "rich>=13",
+    "tiktoken>=0.7",
+    "tree-sitter>=0.23",
+    "tree-sitter-python>=0.23",
+    "gitpython>=3.1",
+    "networkx>=3.3",
+]
+
+[project.scripts]
+cca = "cca.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
