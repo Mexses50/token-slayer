@@ -29,8 +29,9 @@ htmlcov/
 *.log
 *.lock
 
-# Generated snapshot — Claude reads this directly, exclude from token count
+# Generated files — Claude reads these directly, exclude from token count
 CONTEXT.md
+CHECKPOINT.md
 
 # Added by tslayer slim
 .cca_cache.json
