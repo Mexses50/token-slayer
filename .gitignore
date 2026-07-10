@@ -12,3 +12,4 @@ build/
 *.log
 .env
 CONTEXT.md
+.mcp.json

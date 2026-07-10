@@ -55,7 +55,22 @@ else
     ok ".env already exists"
 fi
 
-# ── 7. Smoke test ───────────────────────────────────────────────────────────
+# ── 7. Register MCP server (.mcp.json) ──────────────────────────────────────
+TSLAYER_PATH="$(pwd)/.venv/bin/tslayer"
+cat > .mcp.json << MCPEOF
+{
+  "mcpServers": {
+    "tslayer": {
+      "command": "${TSLAYER_PATH}",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+MCPEOF
+ok ".mcp.json created (Claude Code will auto-load this)"
+
+# ── 8. Smoke test ───────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${GRAY}Verifying...${NC}"
 tslayer --help 2>&1 | head -3 | sed 's/^/    /'
@@ -64,8 +79,7 @@ echo ""
 echo -e "  ${GREEN}✓ Token Slayer is ready!${NC}"
 echo ""
 echo -e "  ${CYAN}Next steps:${NC}"
-echo "    1. Edit .env  →  add ANTHROPIC_API_KEY (and/or OPENAI_API_KEY)"
-echo "    2. Activate venv:  source .venv/bin/activate"
-echo "    3. Try it:  tslayer score ."
-echo "    4. Start proxy:  tslayer serve"
+echo "    1. source .venv/bin/activate"
+echo "    2. tslayer score ."
+echo "    3. Open project in Claude Code — MCP tools load automatically"
 echo ""

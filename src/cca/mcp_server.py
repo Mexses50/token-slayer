@@ -103,6 +103,38 @@ def create_server() -> "FastMCP":  # type: ignore[return]
         )
 
     @mcp.tool()
+    def snapshot_tool(project_path: str) -> str:
+        """Get a compressed overview of the project (file tree + signatures).
+
+        Call this FIRST at the start of every session before reading any files.
+        Returns CONTEXT.md content if it exists, otherwise generates it on the fly.
+        Typically reduces context by 80-90% vs reading all source files.
+        """
+        root = Path(project_path)
+        context_md = root / "CONTEXT.md"
+        if context_md.exists():
+            return context_md.read_text(encoding="utf-8")
+        from cca.snapshot import build_snapshot
+        return build_snapshot(root)
+
+    @mcp.tool()
+    def focus_tool(project_path: str, query: str, top_n: int = 8) -> str:
+        """Find the files most relevant to a task — read only these files.
+
+        Use this BEFORE reading any source files. Describe what you're working
+        on in `query` and only read the files this tool returns.
+
+        Args:
+            project_path: Root directory of the project.
+            query: Task description, e.g. 'fix health score calculation'.
+            top_n: Number of files to return (default 8).
+        """
+        from cca.focus import rank_files
+        root = Path(project_path)
+        ranked = rank_files(root, query, top_n=top_n)
+        return json.dumps(ranked, indent=2)
+
+    @mcp.tool()
     def generate_config_tool(project_path: str) -> str:
         """Generate an optimised CLAUDE.md for a Python project."""
         from cca.config_gen import generate_claude_md

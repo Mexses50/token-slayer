@@ -50,7 +50,23 @@ if (-not (Test-Path ".env")) {
     Ok ".env already exists"
 }
 
-# ── 7. Smoke test ───────────────────────────────────────────────────────────
+# ── 7. Register MCP server (.mcp.json) ──────────────────────────────────────
+$tslayerExe = (Resolve-Path ".venv\Scripts\tslayer.exe").Path
+$mcpJson = @"
+{
+  "mcpServers": {
+    "tslayer": {
+      "command": "$($tslayerExe -replace '\\', '\\')",
+      "args": ["mcp"],
+      "type": "stdio"
+    }
+  }
+}
+"@
+$mcpJson | Out-File -FilePath ".mcp.json" -Encoding utf8 -NoNewline
+Ok ".mcp.json created (Claude Code will auto-load this)"
+
+# ── 8. Smoke test ───────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "  Verifying..." -ForegroundColor Gray
 $help = tslayer --help 2>&1 | Select-Object -First 3
@@ -60,8 +76,7 @@ Write-Host ""
 Write-Host "  ✓ Token Slayer is ready!" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Next steps:" -ForegroundColor Cyan
-Write-Host "    1. Edit .env  →  add ANTHROPIC_API_KEY (and/or OPENAI_API_KEY)"
-Write-Host "    2. Activate venv:  .\.venv\Scripts\Activate.ps1"
-Write-Host "    3. Try it:  tslayer score ."
-Write-Host "    4. Start proxy:  tslayer serve"
+Write-Host "    1. Activate venv:  .\.venv\Scripts\Activate.ps1"
+Write-Host "    2. Try it:  tslayer score ."
+Write-Host "    3. Open project in Claude Code — MCP tools load automatically"
 Write-Host ""
