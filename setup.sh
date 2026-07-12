@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Token Slayer — Mac/Linux one-shot setup
+# Token Slayer - Mac/Linux one-shot setup
 # Usage: ./setup.sh
 
 set -euo pipefail
@@ -10,11 +10,11 @@ warn() { echo -e "  ${YELLOW}[!!]${NC} $1"; }
 fail() { echo -e "  ${RED}[X] ${NC} $1"; exit 1; }
 
 echo ""
-echo -e "  ${CYAN}Token Slayer — Setup${NC}"
+echo -e "  ${CYAN}Token Slayer - Setup${NC}"
 echo -e "  ${CYAN}=====================${NC}"
 echo ""
 
-# ── 1. Python check ─────────────────────────────────────────────────────────
+# -- 1. Python check ---------------------------------------------------------
 if command -v python3 &>/dev/null; then
     ok "$(python3 --version)"
     PY=python3
@@ -25,7 +25,7 @@ else
     fail "Python not found. Install Python 3.11+ first."
 fi
 
-# ── 2. Virtual environment ───────────────────────────────────────────────────
+# -- 2. Virtual environment ---------------------------------------------------
 if [ ! -d ".venv" ]; then
     echo -e "  ${GRAY}Creating .venv...${NC}"
     $PY -m venv .venv
@@ -34,28 +34,28 @@ else
     ok ".venv already exists"
 fi
 
-# ── 3. Activate ─────────────────────────────────────────────────────────────
+# -- 3. Activate -------------------------------------------------------------
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
-# ── 4. Upgrade pip ──────────────────────────────────────────────────────────
+# -- 4. Upgrade pip ----------------------------------------------------------
 echo -e "  ${GRAY}Upgrading pip...${NC}"
 pip install --upgrade pip --quiet
 
-# ── 5. Install all extras ────────────────────────────────────────────────────
+# -- 5. Install all extras ----------------------------------------------------
 echo -e "  ${GRAY}Installing dependencies (this may take a minute)...${NC}"
 pip install -e ".[dev,mcp]" --quiet
 ok "All dependencies installed"
 
-# ── 6. .env setup ───────────────────────────────────────────────────────────
+# -- 6. .env setup -----------------------------------------------------------
 if [ ! -f ".env" ]; then
     cp .env.example .env
-    ok ".env created from .env.example (no API keys needed — Token Slayer runs locally)"
+    ok ".env created from .env.example (no API keys needed - Token Slayer runs locally)"
 else
     ok ".env already exists"
 fi
 
-# ── 7. Register MCP server (.mcp.json) ───────────────────────────────────────
+# -- 7. Register MCP server (.mcp.json) ---------------------------------------
 # Prefer a global pipx install so the generated .mcp.json works from ANY
 # project on this machine (and can be copied to other people's machines
 # as long as they also run `pipx install`). Falls back to this repo's
@@ -64,9 +64,9 @@ if command -v pipx &>/dev/null; then
     echo -e "  ${GRAY}Installing tslayer globally via pipx (portable across projects)...${NC}"
     pipx install ".[mcp]" --force --quiet
     TSLAYER_CMD="tslayer"
-    ok "tslayer installed globally — .mcp.json will use the bare 'tslayer' command"
+    ok "tslayer installed globally - .mcp.json will use the bare 'tslayer' command"
 else
-    warn "pipx not found — .mcp.json will point at this repo's .venv (only works on this machine/path)"
+    warn "pipx not found - .mcp.json will point at this repo's .venv (only works on this machine/path)"
     warn "For a portable setup: pip install pipx, then re-run this script"
     TSLAYER_CMD="$(pwd)/.venv/bin/tslayer"
 fi
@@ -84,16 +84,16 @@ cat > .mcp.json << MCPEOF
 MCPEOF
 ok ".mcp.json created (Claude Code will auto-load this)"
 
-# ── 8. Smoke test ───────────────────────────────────────────────────────────
+# -- 8. Smoke test -----------------------------------------------------------
 echo ""
 echo -e "  ${GRAY}Verifying...${NC}"
 tslayer --help 2>&1 | head -3 | sed 's/^/    /'
 
 echo ""
-echo -e "  ${GREEN}✓ Token Slayer is ready!${NC}"
+echo -e "  ${GREEN}v Token Slayer is ready!${NC}"
 echo ""
 echo -e "  ${CYAN}Next steps:${NC}"
 echo "    1. source .venv/bin/activate"
 echo "    2. tslayer score ."
-echo "    3. Open project in Claude Code — MCP tools load automatically"
+echo "    3. Open project in Claude Code - MCP tools load automatically"
 echo ""
