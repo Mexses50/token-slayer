@@ -86,7 +86,10 @@ Ok ".mcp.json created (Claude Code will auto-load this)"
 # -- 8. Smoke test -----------------------------------------------------------
 Write-Host ""
 Write-Host "  Verifying..." -ForegroundColor Gray
-$help = tslayer --help 2>&1 | Select-Object -First 3
+# Note: no 2>&1 here -- redirecting a native exe's stderr in PowerShell 5.1
+# wraps each line as a NativeCommandError and sets $? to false even on
+# success, which would make this script look like it failed when it didn't.
+$help = tslayer --help | Select-Object -First 3
 $help | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
 
 Write-Host ""
@@ -97,3 +100,5 @@ Write-Host "    1. Activate venv:  .\.venv\Scripts\Activate.ps1"
 Write-Host "    2. Try it:  tslayer score ."
 Write-Host "    3. Open project in Claude Code - MCP tools load automatically"
 Write-Host ""
+
+exit 0
