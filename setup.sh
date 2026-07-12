@@ -50,18 +50,32 @@ ok "All dependencies installed"
 # ── 6. .env setup ───────────────────────────────────────────────────────────
 if [ ! -f ".env" ]; then
     cp .env.example .env
-    warn ".env created from .env.example — open it and add your API keys!"
+    ok ".env created from .env.example (no API keys needed — Token Slayer runs locally)"
 else
     ok ".env already exists"
 fi
 
-# ── 7. Register MCP server (.mcp.json) ──────────────────────────────────────
-TSLAYER_PATH="$(pwd)/.venv/bin/tslayer"
+# ── 7. Register MCP server (.mcp.json) ───────────────────────────────────────
+# Prefer a global pipx install so the generated .mcp.json works from ANY
+# project on this machine (and can be copied to other people's machines
+# as long as they also run `pipx install`). Falls back to this repo's
+# .venv path, which only works on this machine, in this exact location.
+if command -v pipx &>/dev/null; then
+    echo -e "  ${GRAY}Installing tslayer globally via pipx (portable across projects)...${NC}"
+    pipx install ".[mcp]" --force --quiet
+    TSLAYER_CMD="tslayer"
+    ok "tslayer installed globally — .mcp.json will use the bare 'tslayer' command"
+else
+    warn "pipx not found — .mcp.json will point at this repo's .venv (only works on this machine/path)"
+    warn "For a portable setup: pip install pipx, then re-run this script"
+    TSLAYER_CMD="$(pwd)/.venv/bin/tslayer"
+fi
+
 cat > .mcp.json << MCPEOF
 {
   "mcpServers": {
     "tslayer": {
-      "command": "${TSLAYER_PATH}",
+      "command": "${TSLAYER_CMD}",
       "args": ["mcp"],
       "type": "stdio"
     }
