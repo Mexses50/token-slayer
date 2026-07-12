@@ -5,6 +5,20 @@ import pytest
 from pathlib import Path
 
 
+@pytest.fixture(autouse=True)
+def _wide_terminal(monkeypatch):
+    """Force a wide, fixed terminal size for every test.
+
+    Typer/Rich renders --help output based on detected terminal width.
+    Without a real TTY (e.g. GitHub Actions runners), Rich falls back to
+    a narrow default and wraps option names like "--tokens" mid-word,
+    breaking any test that asserts on --help output content. A fixed
+    wide COLUMNS makes CliRunner output deterministic across machines.
+    """
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.setenv("LINES", "50")
+
+
 @pytest.fixture
 def sample_project(tmp_path: Path) -> Path:
     """
